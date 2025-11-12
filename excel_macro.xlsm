@@ -1,0 +1,48 @@
+Sub ImportSpecificASCFile()
+    Dim filePath As Variant
+    Dim ws As Worksheet
+    
+    ' Set the target worksheet to "Sheet1"
+    Set ws = ThisWorkbook.Sheets("Hoja1")
+    
+    ' Optional: Clear previous data from the sheet first
+    ws.Cells.Clear
+    
+    ' Use FileDialog to let the user select the file interactively
+    With Application.FileDialog(msoFileDialogOpen)
+        .AllowMultiSelect = False
+        .Title = "Please select the .asc data file"
+        
+        ' Clear existing filters and add a filter specifically for .asc files
+        .Filters.Clear
+        .Filters.Add "ASC Files", "*.asc", 1
+        .Filters.Add "All Files", "*.*", 2
+        
+        ' Show the dialog box
+        If .Show = True Then
+            filePath = .SelectedItems(1)
+        Else
+            MsgBox "File selection cancelled.", vbExclamation
+            Exit Sub
+        End If
+    End With
+    
+    ' Import the file using QueryTables.Add, which handles the import and delimitation
+    With ws.QueryTables.Add(Connection:="TEXT;" & filePath, Destination:=ws.Range("A1"))
+        .Name = "ImportedASCData"
+        ' Configure text file parsing options, specifically the pipe delimiter
+        .TextFileParseType = xlDelimited
+        .TextFileOtherDelimiter = "|" ' Specify the pipe delimiter
+        ' Set other parsing options as needed (assumes headers are in the first row)
+        .FieldNames = True
+        .TextFileTextQualifier = xlTextQualifierDoubleQuote
+        .Refresh BackgroundQuery:=False ' Run the import synchronously
+    End With
+    
+    ' Extract just the file name for the message box
+    Dim fileName As String
+    fileName = Right(filePath, Len(filePath) - InStrRev(filePath, "\"))
+    
+    MsgBox "Data from " & fileName & " imported and separated successfully into Sheet1.", vbInformation
+    
+End Sub
