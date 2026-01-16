@@ -164,3 +164,46 @@ td {
     transform: translateY(0);
   }
 }
+
+.instructions-section {
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 30px;
+  margin-bottom: 40px;
+}
+
+.instructions-section h2 {
+  font-size: 1.4rem;
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: var(--primary);
+}
+
+.instructions-section ol {
+  padding-left: 20px;
+  color: #94a3b8;
+  line-height: 1.6;
+}
+
+.instructions-section li {
+  margin-bottom: 10px;
+}
+
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 60px;
+  margin-bottom: 20px;
+}
+
+.list-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.list-actions {
+  display: flex;
+  gap: 12px;
+}
