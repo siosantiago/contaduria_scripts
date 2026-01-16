@@ -20,8 +20,8 @@ export default function Home() {
         setFiles(prev => [...prev, processed]);
         if (!previewFile) setPreviewFile(processed);
       } catch (err) {
-        console.error('Error processing file:', file.name, err);
-        alert(`Error processing ${file.name}`);
+        console.error('Error procesando archivo:', file.name, err);
+        alert(`Error procesando ${file.name}`);
       }
     }
   }, [previewFile]);
@@ -36,16 +36,35 @@ export default function Home() {
         setFiles(prev => [...prev, processed]);
         if (!previewFile) setPreviewFile(processed);
       } catch (err) {
-        alert(`Error processing ${file.name}`);
+        alert(`Error procesando ${file.name}`);
       }
     }
+  };
+
+  const downloadAll = () => {
+    files.forEach(file => downloadExcel(file));
+  };
+
+  const clearAll = () => {
+    setFiles([]);
+    setPreviewFile(null);
   };
 
   return (
     <main className="main-container">
       <div className="header">
-        <h1>ASC Converter</h1>
-        <p>Convert your pipe-delimited accounting files to Excel in seconds.</p>
+        <h1>Convertidor ASC</h1>
+        <p>Convierte tus archivos contables delimitados por tubería (|) a Excel en segundos.</p>
+      </div>
+
+      <div className="instructions-section">
+        <h2>¿Cómo usar?</h2>
+        <ol>
+          <li>Arrastra tus archivos <b>.asc</b> al recuadro de abajo o haz clic para seleccionarlos.</li>
+          <li>Los archivos se procesarán automáticamente convirtiendo campos numéricos y eliminando espacios innecesarios.</li>
+          <li>Puedes visualizar una vista previa de los primeros 10 renglones de cada archivo.</li>
+          <li>Descarga los archivos individualmente o usa el botón <b>"Descargar Todo"</b> para bajarlos todos a la vez.</li>
+        </ol>
       </div>
 
       <div
@@ -63,42 +82,62 @@ export default function Home() {
           onChange={onFileSelect}
           style={{ display: 'none' }}
         />
-        <h2>Drop files here</h2>
-        <p>or click to browse from your computer</p>
+        <h2>Suelte sus archivos aquí</h2>
+        <p>o haga clic para buscar en su equipo</p>
       </div>
 
       {files.length > 0 && (
-        <div className="file-list">
-          {files.map((file, idx) => (
-            <div key={idx} className="file-card">
-              <div className="file-info">
-                <h3>{file.fileName}</h3>
-                <span>{file.data.length} rows detected</span>
-              </div>
-              <div className="file-actions">
-                <button
-                  className="action-btn secondary"
-                  onClick={() => setPreviewFile(file)}
-                >
-                  Preview
-                </button>
-                <button
-                  className="action-btn"
-                  onClick={() => downloadExcel(file)}
-                >
-                  Download Excel
-                </button>
-              </div>
+        <>
+          <div className="list-header">
+            <h2>Archivos Procesados</h2>
+            <div className="list-actions">
+              <button
+                className="action-btn secondary"
+                onClick={clearAll}
+              >
+                Limpiar Lista
+              </button>
+              <button
+                className="action-btn"
+                onClick={downloadAll}
+              >
+                Descargar Todo ({files.length})
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
+
+          <div className="file-list">
+            {files.map((file, idx) => (
+              <div key={idx} className="file-card">
+                <div className="file-info">
+                  <h3>{file.fileName}</h3>
+                  <span>{file.data.length} filas detectadas</span>
+                </div>
+                <div className="file-actions">
+                  <button
+                    className="action-btn secondary"
+                    onClick={() => setPreviewFile(file)}
+                  >
+                    Vista Previa
+                  </button>
+                  <button
+                    className="action-btn"
+                    onClick={() => downloadExcel(file)}
+                  >
+                    Descargar Excel
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {previewFile && (
         <div className="preview-section">
           <div style={{ padding: '20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Preview: {previewFile.fileName}</h2>
-            <span style={{ color: '#64748b', fontSize: '0.9rem' }}>Showing first 10 rows</span>
+            <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Vista Previa: {previewFile.fileName}</h2>
+            <span style={{ color: '#64748b', fontSize: '0.9rem' }}>Mostrando las primeras 10 filas</span>
           </div>
           <table>
             <thead>

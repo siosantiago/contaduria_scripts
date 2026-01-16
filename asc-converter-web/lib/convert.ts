@@ -66,6 +66,6 @@ export async function processAscFile(file: File): Promise<ProcessedData> {
 export function downloadExcel(processed: ProcessedData) {
     const worksheet = XLSX.utils.json_to_sheet(processed.data);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Data');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Datos');
     XLSX.writeFile(workbook, processed.fileName);
 }
