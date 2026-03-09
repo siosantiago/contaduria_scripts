@@ -3,6 +3,8 @@ import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
 import path from 'path';
 
+let cachedClient: MongoClient | null = null;
+
 export async function POST(request: Request) {
     try {
         const body = await request.json();
@@ -17,9 +19,12 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Falta configurar MONGO_DB_URL en el archivo .env (../.env)' }, { status: 400 });
         }
 
-        const client = new MongoClient(mongoUrl);
-        await client.connect();
-        const db = client.db('ContaduriaFiles');
+        if (!cachedClient) {
+            cachedClient = new MongoClient(mongoUrl);
+            await cachedClient.connect();
+        }
+
+        const db = cachedClient.db('ContaduriaFiles');
         const collection = db.collection('pedimentos');
 
         // Clean current data only on the VERY FIRST batch
@@ -137,8 +142,6 @@ export async function POST(request: Request) {
             const result = await collection.insertOne(finalDocMongo);
             insertId = result.insertedId;
         }
-
-        await client.close();
 
         return NextResponse.json({
             success: true,
