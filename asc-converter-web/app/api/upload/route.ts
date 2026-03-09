@@ -84,6 +84,12 @@ export async function POST(request: Request) {
         const mergedData: any = {};
         let indexFallback = 0;
 
+        // Extract all universal headers across all files
+        const globalHeaders = new Set<string>();
+        for (const doc of documentsToInsert) {
+            Object.keys(doc.row_data).forEach(k => globalHeaders.add(k));
+        }
+
         for (const doc of documentsToInsert) {
             const my = doc.month_year;
             const pat = doc.Patente;
@@ -107,11 +113,14 @@ export async function POST(request: Request) {
                 indexFallback++;
             }
 
-            // Drop undefined/empty
+            // Normalize row to include ALL global headers (even if empty)
             const finalRow: any = {};
-            Object.keys(row).forEach(k => {
-                if (row[k] !== '' && row[k] !== null && row[k] !== undefined) {
-                    finalRow[k] = row[k];
+            globalHeaders.forEach(k => {
+                const val = row[k];
+                if (val !== '' && val !== null && val !== undefined) {
+                    finalRow[k] = val;
+                } else {
+                    finalRow[k] = ''; // Ensure column is created even if file didn't have it
                 }
             });
 
