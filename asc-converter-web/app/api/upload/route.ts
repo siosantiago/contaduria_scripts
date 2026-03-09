@@ -3,7 +3,10 @@ import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
 import path from 'path';
 
-let cachedClientPromise: Promise<MongoClient> | null = null;
+// Use a global variable to preserve the value across Next.js HMR (Hot Module Replacement)
+let globalWithMongo = global as typeof globalThis & {
+    _mongoClientPromise?: Promise<MongoClient>;
+};
 
 export async function POST(request: Request) {
     try {
@@ -19,15 +22,20 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Falta configurar MONGO_DB_URL en el archivo .env (../.env)' }, { status: 400 });
         }
 
-        if (!cachedClientPromise) {
-            const client = new MongoClient(mongoUrl);
-            cachedClientPromise = client.connect().catch((error) => {
-                cachedClientPromise = null;
-                throw error;
+        if (!globalWithMongo._mongoClientPromise) {
+            const client = new MongoClient(mongoUrl, {
+                maxPoolSize: 10,
+                serverSelectionTimeoutMS: 10000,
+                socketTimeoutMS: 45000,
+                tls: true,
+            });
+            globalWithMongo._mongoClientPromise = client.connect().catch(err => {
+                globalWithMongo._mongoClientPromise = undefined;
+                throw err;
             }).then(() => client);
         }
 
-        const client = await cachedClientPromise;
+        const client = await globalWithMongo._mongoClientPromise;
         const db = client.db('ContaduriaFiles');
         const collection = db.collection('pedimentos');
 
