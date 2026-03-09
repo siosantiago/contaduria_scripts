@@ -3,6 +3,8 @@ import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
 import path from 'path';
 
+let cachedClientPromise: Promise<MongoClient> | null = null;
+
 export async function POST(request: Request) {
     try {
         const body = await request.json();
@@ -17,8 +19,15 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Falta configurar MONGO_DB_URL en el archivo .env (../.env)' }, { status: 400 });
         }
 
-        const client = new MongoClient(mongoUrl);
-        await client.connect();
+        if (!cachedClientPromise) {
+            const client = new MongoClient(mongoUrl);
+            cachedClientPromise = client.connect().catch((error) => {
+                cachedClientPromise = null;
+                throw error;
+            }).then(() => client);
+        }
+
+        const client = await cachedClientPromise;
         const db = client.db('ContaduriaFiles');
         const collection = db.collection('pedimentos');
 
@@ -75,6 +84,12 @@ export async function POST(request: Request) {
         const mergedData: any = {};
         let indexFallback = 0;
 
+        // Extract all universal headers across all files
+        const globalHeaders = new Set<string>();
+        for (const doc of documentsToInsert) {
+            Object.keys(doc.row_data).forEach(k => globalHeaders.add(k));
+        }
+
         for (const doc of documentsToInsert) {
             const my = doc.month_year;
             const pat = doc.Patente;
@@ -98,11 +113,14 @@ export async function POST(request: Request) {
                 indexFallback++;
             }
 
-            // Drop undefined/empty
+            // Normalize row to include ALL global headers (even if empty)
             const finalRow: any = {};
-            Object.keys(row).forEach(k => {
-                if (row[k] !== '' && row[k] !== null && row[k] !== undefined) {
-                    finalRow[k] = row[k];
+            globalHeaders.forEach(k => {
+                const val = row[k];
+                if (val !== '' && val !== null && val !== undefined) {
+                    finalRow[k] = val;
+                } else {
+                    finalRow[k] = ''; // Ensure column is created even if file didn't have it
                 }
             });
 
@@ -122,23 +140,34 @@ export async function POST(request: Request) {
             excelExportRows.push(excelRow);
         }
 
-        // Build the final mega document
+        // Build the final mega document for JSON download
         const finalDocMongo: any = { month_year: {} };
+        const pedimentoDocsToInsert: any[] = [];
+
         for (const my of Object.keys(mergedData)) {
             const pedimentosList = [];
             for (const k of Object.keys(mergedData[my])) {
-                pedimentosList.push(mergedData[my][k]);
+                const pedData = mergedData[my][k];
+                pedimentosList.push(pedData);
+
+                // Add to flat list for MongoDB insertion
+                pedimentoDocsToInsert.push({
+                    month_year_group: my,
+                    Patente: pedData.Patente,
+                    Pedimento: pedData.Pedimento,
+                    Partidas: pedData.Partidas
+                });
             }
             finalDocMongo.month_year[my] = pedimentosList;
         }
 
         let insertId = null;
-        if (Object.keys(finalDocMongo.month_year).length > 0) {
-            const result = await collection.insertOne(finalDocMongo);
-            insertId = result.insertedId;
+        if (pedimentoDocsToInsert.length > 0) {
+            // We use insertMany to store each Pedimento as its own document.
+            // This is MANDATORY because MongoDB has a physical 16 Megabyte BSON limit per single document.
+            await collection.insertMany(pedimentoDocsToInsert);
+            insertId = 'inserted_many';
         }
-
-        await client.close();
 
         return NextResponse.json({
             success: true,

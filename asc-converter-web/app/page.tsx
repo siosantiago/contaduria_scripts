@@ -7,6 +7,8 @@ export default function Home() {
   const [files, setFiles] = useState<any[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [eta, setEta] = useState(0);
   const [response, setResponse] = useState<any>(null);
 
   const parseFileLocally = async (file: File) => {
@@ -83,6 +85,10 @@ export default function Home() {
   const processAndUpload = async () => {
     setIsProcessing(true);
     setResponse(null);
+    setProgress(0);
+    setEta(0);
+
+    const startTime = Date.now();
 
     try {
       let accumulatedCsv: any[] = [];
@@ -105,6 +111,14 @@ export default function Home() {
         if (data.flatCsvData) {
           accumulatedCsv = accumulatedCsv.concat(data.flatCsvData);
         }
+
+        // Update progress and calculate ETA
+        const currentCount = i + 1;
+        setProgress(currentCount);
+        const elapsedSeconds = (Date.now() - startTime) / 1000;
+        const avgTimePerFile = elapsedSeconds / currentCount;
+        const remainingFiles = files.length - currentCount;
+        setEta(Math.round(avgTimePerFile * remainingFiles));
       }
 
       setResponse({ success: true, flatCsvData: accumulatedCsv, finalJson: null });
@@ -128,7 +142,19 @@ export default function Home() {
 
   const downloadCsv = () => {
     if (!response?.flatCsvData) return;
-    const csv = Papa.unparse(response.flatCsvData);
+
+    // Globally extract every single unique column name across all files in the batch!
+    const allHeaders = new Set<string>();
+    response.flatCsvData.forEach((row: any) => {
+      Object.keys(row).forEach(k => allHeaders.add(k));
+    });
+
+    // Provide explicit fields map to PapaParse so it forces empty padding for missing columns globally
+    const csv = Papa.unparse({
+      fields: Array.from(allHeaders),
+      data: response.flatCsvData
+    });
+
     const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -171,10 +197,22 @@ export default function Home() {
             <div className="list-actions">
               <button className="action-btn secondary" onClick={clearAll} disabled={isProcessing}>Borrar Lista</button>
               <button className="action-btn" onClick={processAndUpload} disabled={isProcessing || files.length === 0}>
-                {isProcessing ? 'Sincronizando...' : 'Subir a MongoDB'}
+                {isProcessing ? 'Procesando...' : 'Subir a MongoDB'}
               </button>
             </div>
           </div>
+
+          {isProcessing && (
+            <div style={{ marginTop: '20px', padding: '16px', borderRadius: '8px', background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <strong style={{ color: 'var(--primary)' }}>Subiendo datos: {progress} de {files.length} archivos</strong>
+                <span style={{ color: '#6b7280', fontSize: '0.9rem' }}>Tiempo restante estimado: ~{eta} segundos</span>
+              </div>
+              <div style={{ width: '100%', height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={{ width: `${(progress / files.length) * 100}%`, height: '100%', background: 'var(--primary)', transition: 'width 0.3s' }}></div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
