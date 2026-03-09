@@ -56,7 +56,7 @@ export default function Home() {
 
   const handleFiles = async (uploaded: File[]) => {
     const ascFiles = uploaded.filter(f => f.name.toLowerCase().endsWith('.asc'));
-    const parsed = [];
+    const parsed: any[] = [];
     for (const file of ascFiles) {
       const result = await parseFileLocally(file);
       parsed.push(result);
