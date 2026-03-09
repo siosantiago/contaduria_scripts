@@ -127,20 +127,33 @@ export async function POST(request: Request) {
             excelExportRows.push(excelRow);
         }
 
-        // Build the final mega document
+        // Build the final mega document for JSON download
         const finalDocMongo: any = { month_year: {} };
+        const pedimentoDocsToInsert: any[] = [];
+
         for (const my of Object.keys(mergedData)) {
             const pedimentosList = [];
             for (const k of Object.keys(mergedData[my])) {
-                pedimentosList.push(mergedData[my][k]);
+                const pedData = mergedData[my][k];
+                pedimentosList.push(pedData);
+
+                // Add to flat list for MongoDB insertion
+                pedimentoDocsToInsert.push({
+                    month_year_group: my,
+                    Patente: pedData.Patente,
+                    Pedimento: pedData.Pedimento,
+                    Partidas: pedData.Partidas
+                });
             }
             finalDocMongo.month_year[my] = pedimentosList;
         }
 
         let insertId = null;
-        if (Object.keys(finalDocMongo.month_year).length > 0) {
-            const result = await collection.insertOne(finalDocMongo);
-            insertId = result.insertedId;
+        if (pedimentoDocsToInsert.length > 0) {
+            // We use insertMany to store each Pedimento as its own document.
+            // This is MANDATORY because MongoDB has a physical 16 Megabyte BSON limit per single document.
+            await collection.insertMany(pedimentoDocsToInsert);
+            insertId = 'inserted_many';
         }
 
         return NextResponse.json({
