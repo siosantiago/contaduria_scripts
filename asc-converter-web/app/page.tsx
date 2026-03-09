@@ -93,8 +93,9 @@ export default function Home() {
     try {
       let accumulatedCsv: any[] = [];
 
-      for (let i = 0; i < files.length; i++) {
-        const fileBatch = [files[i]];
+      const CHUNK_SIZE = 10;
+      for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+        const fileBatch = files.slice(i, i + CHUNK_SIZE);
 
         let payloadData: any = null;
         let attempt = 0;
@@ -133,12 +134,17 @@ export default function Home() {
         }
 
         // Update progress and calculate ETA
-        const currentCount = i + 1;
+        const currentCount = Math.min(i + CHUNK_SIZE, files.length);
         setProgress(currentCount);
         const elapsedSeconds = (Date.now() - startTime) / 1000;
         const avgTimePerFile = elapsedSeconds / currentCount;
         const remainingFiles = files.length - currentCount;
         setEta(Math.round(avgTimePerFile * remainingFiles));
+
+        // Add a 1-second delay between chunk requests to give Vercel and MongoDB some breathing room
+        if (currentCount < files.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
 
       setResponse({ success: true, flatCsvData: accumulatedCsv, finalJson: null });
