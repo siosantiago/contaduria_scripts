@@ -103,12 +103,12 @@ export default function Home() {
 
         while (attempt < maxAttempts) {
           try {
-            const res = await fetch('/api/upload', {
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api/upload';
+            const res = await fetch(apiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 parsedFiles: fileBatch,
-                // Only clear the database on the absolute first attempt of the first file
                 isFirstBatch: i === 0 && attempt === 0
               })
             });
