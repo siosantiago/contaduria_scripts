@@ -93,32 +93,58 @@ export default function Home() {
     try {
       let accumulatedCsv: any[] = [];
 
-      for (let i = 0; i < files.length; i++) {
-        const fileBatch = [files[i]];
+      const CHUNK_SIZE = 10;
+      for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+        const fileBatch = files.slice(i, i + CHUNK_SIZE);
 
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            parsedFiles: fileBatch,
-            isFirstBatch: i === 0
-          })
-        });
+        let payloadData: any = null;
+        let attempt = 0;
+        const maxAttempts = 3;
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
+        while (attempt < maxAttempts) {
+          try {
+            const res = await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                parsedFiles: fileBatch,
+                // Only clear the database on the absolute first attempt of the first file
+                isFirstBatch: i === 0 && attempt === 0
+              })
+            });
 
-        if (data.flatCsvData) {
-          accumulatedCsv = accumulatedCsv.concat(data.flatCsvData);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
+            payloadData = data;
+            break; // Break the while loop since it succeeded!
+          } catch (fetchErr: any) {
+            attempt++;
+            console.error(`Attempt ${attempt} failed for file ${files[i].fileName}:`, fetchErr);
+            if (attempt >= maxAttempts) {
+              throw fetchErr; // Exhausted retries, crash the outer try-catch
+            }
+            // Wait 2000ms before retrying
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
+
+        if (payloadData && payloadData.flatCsvData) {
+          accumulatedCsv = accumulatedCsv.concat(payloadData.flatCsvData);
         }
 
         // Update progress and calculate ETA
-        const currentCount = i + 1;
+        const currentCount = Math.min(i + CHUNK_SIZE, files.length);
         setProgress(currentCount);
         const elapsedSeconds = (Date.now() - startTime) / 1000;
         const avgTimePerFile = elapsedSeconds / currentCount;
         const remainingFiles = files.length - currentCount;
         setEta(Math.round(avgTimePerFile * remainingFiles));
+
+        // Add a 1-second delay between chunk requests to give Vercel and MongoDB some breathing room
+        if (currentCount < files.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
 
       setResponse({ success: true, flatCsvData: accumulatedCsv, finalJson: null });
