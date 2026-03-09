@@ -128,7 +128,19 @@ export default function Home() {
 
   const downloadCsv = () => {
     if (!response?.flatCsvData) return;
-    const csv = Papa.unparse(response.flatCsvData);
+
+    // Globally extract every single unique column name across all files in the batch!
+    const allHeaders = new Set<string>();
+    response.flatCsvData.forEach((row: any) => {
+      Object.keys(row).forEach(k => allHeaders.add(k));
+    });
+
+    // Provide explicit fields map to PapaParse so it forces empty padding for missing columns globally
+    const csv = Papa.unparse({
+      fields: Array.from(allHeaders),
+      data: response.flatCsvData
+    });
+
     const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
