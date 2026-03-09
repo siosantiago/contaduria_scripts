@@ -23,11 +23,13 @@ export async function POST(request: Request) {
         }
 
         if (!globalWithMongo._mongoClientPromise) {
+            // Force IPv4 (family: 4) because Node.js 18+ defaults to IPv6, 
+            // which causes "tlsv1 alert internal error" (SSL alert 80) on MongoDB Atlas Free Tier
             const client = new MongoClient(mongoUrl, {
                 maxPoolSize: 10,
-                serverSelectionTimeoutMS: 10000,
+                serverSelectionTimeoutMS: 15000,
                 socketTimeoutMS: 45000,
-                tls: true,
+                family: 4
             });
             globalWithMongo._mongoClientPromise = client.connect().catch(err => {
                 globalWithMongo._mongoClientPromise = undefined;
