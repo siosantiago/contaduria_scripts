@@ -186,6 +186,10 @@ export async function POST(request: Request) {
 
     } catch (error: any) {
         console.error("API error:", error);
+        // If it's a network/SSL error, clear the global cache so the next request tries a fresh connection
+        if (error.name === 'MongoNetworkError' || error.name === 'MongoServerSelectionError' || error.message?.includes('SSL')) {
+            globalWithMongo._mongoClientPromise = undefined;
+        }
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

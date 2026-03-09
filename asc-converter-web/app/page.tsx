@@ -96,20 +96,40 @@ export default function Home() {
       for (let i = 0; i < files.length; i++) {
         const fileBatch = [files[i]];
 
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            parsedFiles: fileBatch,
-            isFirstBatch: i === 0
-          })
-        });
+        let payloadData: any = null;
+        let attempt = 0;
+        const maxAttempts = 3;
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
+        while (attempt < maxAttempts) {
+          try {
+            const res = await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                parsedFiles: fileBatch,
+                // Only clear the database on the absolute first attempt of the first file
+                isFirstBatch: i === 0 && attempt === 0
+              })
+            });
 
-        if (data.flatCsvData) {
-          accumulatedCsv = accumulatedCsv.concat(data.flatCsvData);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
+            payloadData = data;
+            break; // Break the while loop since it succeeded!
+          } catch (fetchErr: any) {
+            attempt++;
+            console.error(`Attempt ${attempt} failed for file ${files[i].fileName}:`, fetchErr);
+            if (attempt >= maxAttempts) {
+              throw fetchErr; // Exhausted retries, crash the outer try-catch
+            }
+            // Wait 2000ms before retrying
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
+
+        if (payloadData && payloadData.flatCsvData) {
+          accumulatedCsv = accumulatedCsv.concat(payloadData.flatCsvData);
         }
 
         // Update progress and calculate ETA
