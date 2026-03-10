@@ -1,50 +1,8 @@
 import { NextResponse } from 'next/server';
-import { MongoClient } from 'mongodb';
-import dotenv from 'dotenv';
-import path from 'path';
-
-// Use a global variable to preserve the value across Next.js HMR (Hot Module Replacement)
-let globalWithMongo = global as typeof globalThis & {
-    _mongoClientPromise?: Promise<MongoClient>;
-};
-
 export async function POST(request: Request) {
     try {
         const body = await request.json();
         const { parsedFiles, isFirstBatch } = body;
-
-        // Load .env from parent directory where the python script used to run
-        dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
-        const mongoUrl = process.env.MONGO_DB_URL;
-
-        // Connect to MongoDB
-        if (!mongoUrl) {
-            return NextResponse.json({ error: 'Falta configurar MONGO_DB_URL en el archivo .env (../.env)' }, { status: 400 });
-        }
-
-        if (!globalWithMongo._mongoClientPromise) {
-            // Force IPv4 (family: 4) because Node.js 18+ defaults to IPv6, 
-            // which causes "tlsv1 alert internal error" (SSL alert 80) on MongoDB Atlas Free Tier
-            const client = new MongoClient(mongoUrl, {
-                maxPoolSize: 10,
-                serverSelectionTimeoutMS: 15000,
-                socketTimeoutMS: 45000,
-                family: 4
-            });
-            globalWithMongo._mongoClientPromise = client.connect().catch(err => {
-                globalWithMongo._mongoClientPromise = undefined;
-                throw err;
-            }).then(() => client);
-        }
-
-        const client = await globalWithMongo._mongoClientPromise;
-        const db = client.db('ContaduriaFiles');
-        const collection = db.collection('pedimentos');
-
-        // Clean current data only on the VERY FIRST batch
-        if (isFirstBatch) {
-            await collection.deleteMany({});
-        }
 
         // Processing the records exactly like Python script
         const documentsToInsert: any[] = [];
@@ -171,13 +129,7 @@ export async function POST(request: Request) {
             finalDocMongo.month_year[my] = pedimentosList;
         }
 
-        let insertId = null;
-        if (pedimentoDocsToInsert.length > 0) {
-            // We use insertMany to store each Pedimento as its own document.
-            // This is MANDATORY because MongoDB has a physical 16 Megabyte BSON limit per single document.
-            await collection.insertMany(pedimentoDocsToInsert);
-            insertId = 'inserted_many';
-        }
+        let insertId = 'no-db';
 
         return NextResponse.json({
             success: true,
@@ -188,10 +140,6 @@ export async function POST(request: Request) {
 
     } catch (error: any) {
         console.error("API error:", error);
-        // If it's a network/SSL error, clear the global cache so the next request tries a fresh connection
-        if (error.name === 'MongoNetworkError' || error.name === 'MongoServerSelectionError' || error.message?.includes('SSL')) {
-            globalWithMongo._mongoClientPromise = undefined;
-        }
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
