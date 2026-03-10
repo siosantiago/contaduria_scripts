@@ -28,6 +28,14 @@ client = AsyncIOMotorClient(MONGO_URL)
 db = client["ContaduriaFiles"]
 collection = db["pedimentos"]
 
+@app.get("/")
+async def root_health_check():
+    return {
+        "status": "Online",
+        "service": "Contaduria Python MongoDB Backend",
+        "message": "Send POST requests containing the file payload to /api/upload"
+    }
+
 class FileData(BaseModel):
     fileName: str
     data: List[Dict[str, Any]]
