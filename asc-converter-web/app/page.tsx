@@ -149,7 +149,7 @@ export default function Home() {
 
       setResponse({ success: true, flatCsvData: accumulatedCsv, finalJson: null });
     } catch (err: any) {
-      alert(`Error interactuando con Mongo: ${err.message}`);
+      alert(`Error procesando los archivos: ${err.message}`);
     } finally {
       setIsProcessing(false);
     }

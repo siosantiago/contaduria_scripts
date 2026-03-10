@@ -1,7 +1,6 @@
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from dotenv import load_dotenv
@@ -18,15 +17,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-MONGO_URL = os.getenv("MONGO_DB_URL")
-if not MONGO_URL:
-    raise ValueError("MONGO_DB_URL is missing")
-
-# Use Motor for async MongoDB operations
-client = AsyncIOMotorClient(MONGO_URL)
-db = client["ContaduriaFiles"]
-collection = db["pedimentos"]
 
 @app.get("/")
 async def root_health_check():
@@ -47,9 +37,6 @@ class UploadRequest(BaseModel):
 @app.post("/api/upload")
 async def upload_files(payload: UploadRequest):
     try:
-        if payload.isFirstBatch:
-            await collection.delete_many({})
-
         documents_to_insert = []
         excel_export_rows = []
 
@@ -155,10 +142,7 @@ async def upload_files(payload: UploadRequest):
                 })
             final_doc_mongo["month_year"][my] = pedimentos_list
 
-        insert_id = None
-        if pedimento_docs_to_insert:
-            await collection.insert_many(pedimento_docs_to_insert)
-            insert_id = "inserted_many"
+        insert_id = "no-db"
 
         return {
             "success": True,
