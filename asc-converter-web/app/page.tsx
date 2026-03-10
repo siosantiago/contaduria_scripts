@@ -93,7 +93,7 @@ export default function Home() {
     try {
       let accumulatedCsv: any[] = [];
 
-      const CHUNK_SIZE = 10;
+      const CHUNK_SIZE = 1;
       for (let i = 0; i < files.length; i += CHUNK_SIZE) {
         const fileBatch = files.slice(i, i + CHUNK_SIZE);
 
@@ -113,8 +113,16 @@ export default function Home() {
               })
             });
 
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error);
+            // Read the raw text first! If Vercel throws a 413 or 504 HTML page, res.json() will crash silently
+            const responseText = await res.text();
+            let data: any;
+            try {
+              data = JSON.parse(responseText);
+            } catch (e) {
+              throw new Error(`Cloud Error (${res.status}): ${responseText.substring(0, 100)}`);
+            }
+
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
             payloadData = data;
             break; // Break the while loop since it succeeded!
@@ -223,7 +231,7 @@ export default function Home() {
             <div className="list-actions">
               <button className="action-btn secondary" onClick={clearAll} disabled={isProcessing}>Borrar Lista</button>
               <button className="action-btn" onClick={processAndUpload} disabled={isProcessing || files.length === 0}>
-                {isProcessing ? 'Procesando...' : 'Subir a MongoDB'}
+                {isProcessing ? 'Procesando...' : 'Processar'}
               </button>
             </div>
           </div>
