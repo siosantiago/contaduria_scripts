@@ -1,15 +1,30 @@
 import os
+import uuid
+import datetime
+import xmltodict
+from supabase import create_client, Client
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = FastAPI()
 
-# Allow CORS for local dev and Vercel frontend
+# --- Supabase Setup ---
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
+supabase_client: Optional[Client] = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("Supabase client initialized successfully.")
+    except Exception as e:
+        print(f"Failed to initialize Supabase client: {e}")
+# ----------------------# Allow CORS for local dev and Vercel frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -154,3 +169,82 @@ async def upload_files(payload: UploadRequest):
     except Exception as e:
         print("Error processing batch:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- XML to Supabase Upload Endpoint ---
+
+class XmlFileData(BaseModel):
+    fileName: str
+    content: str
+
+class UploadXmlRequest(BaseModel):
+    files: List[XmlFileData]
+
+@app.post("/api/upload-xml")
+async def upload_xml_files(payload: UploadXmlRequest):
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Supabase client not configured or missing SUPABASE_URL / SUPABASE_KEY")
+
+    inserted_count = 0
+    errors = []
+    
+    # Optional: We can insert in batches if payload is huge
+    rows_to_insert = []
+
+    for file_data in payload.files:
+        try:
+            # Parse XML to dictionary
+            xml_dict = xmltodict.parse(file_data.content)
+            
+            # The root is usually <cfdi:Comprobante>
+            comprobante = xml_dict.get("cfdi:Comprobante", {})
+            if not comprobante:
+                errors.append({"file": file_data.fileName, "error": "No cfdi:Comprobante root element found."})
+                continue
+            
+            # Extract fields handling variations (some keys use @ prefix due to xmltodict parsing attributes)
+            folio = comprobante.get("@Folio", "")
+            fecha = comprobante.get("@Fecha", None)
+            total = comprobante.get("@Total", 0)
+            
+            # Handle Emisor and Receptor blocks
+            emisor = comprobante.get("cfdi:Emisor", {})
+            emisor_rfc = emisor.get("@Rfc", "")
+            emisor_nombre = emisor.get("@Nombre", "")
+            
+            receptor = comprobante.get("cfdi:Receptor", {})
+            receptor_rfc = receptor.get("@Rfc", "")
+            receptor_nombre = receptor.get("@Nombre", "")
+            
+            row = {
+                "id": str(uuid.uuid4()),
+                "source_file": file_data.fileName,
+                "folio": folio,
+                "fecha": fecha if fecha else None,
+                "emisor_rfc": emisor_rfc,
+                "emisor_nombre": emisor_nombre,
+                "receptor_rfc": receptor_rfc,
+                "receptor_nombre": receptor_nombre,
+                "total": float(total) if total else 0.0,
+                "raw_data": xml_dict  # the complete parsed JSON structure
+            }
+            rows_to_insert.append(row)
+            
+        except Exception as e:
+            errors.append({"file": file_data.fileName, "error": str(e)})
+
+    # Insert into Supabase table "invoices" in chunks of 100 to avoid request size limits
+    chunk_size = 100
+    for i in range(0, len(rows_to_insert), chunk_size):
+        chunk = rows_to_insert[i:i + chunk_size]
+        try:
+            res = supabase_client.table("invoices").insert(chunk).execute()
+            inserted_count += len(chunk)
+        except Exception as e:
+            errors.append({"error": f"Failed inserting chunk {i}-{i+chunk_size}: {str(e)}"})
+
+    return {
+        "success": True,
+        "processed": len(payload.files),
+        "inserted": inserted_count,
+        "errors": errors
+    }
