@@ -91,117 +91,63 @@ export default function Home() {
     const startTime = Date.now();
 
     try {
-      const documentsToInsert: any[] = [];
-      const excelExportRows: any[] = [];
+      let accumulatedCsv: any[] = [];
 
-      // 1. First iteration to standardize files structure
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      const CHUNK_SIZE = 10;
+      for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+        const fileBatch = files.slice(i, i + CHUNK_SIZE);
 
-        for (const rawRow of file.data) {
-          let patente = rawRow['Patente'] || rawRow['SeccionAduanera'];
-          let pedimento = rawRow['Pedimento'];
+        let payloadData: any = null;
+        let attempt = 0;
+        const maxAttempts = 3;
 
-          if (!patente || !pedimento) continue;
+        while (attempt < maxAttempts) {
+          try {
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api/upload';
+            const res = await fetch(apiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                parsedFiles: fileBatch,
+                isFirstBatch: i === 0 && attempt === 0
+              })
+            });
 
-          let monthYearStr = 'Unknown';
-          const dateRaw = rawRow['FechaPagoReal'] || rawRow['FechaFacturacion'];
-          if (dateRaw) {
-            const d = new Date(dateRaw);
-            if (!isNaN(d.getTime())) {
-              const formatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
-              monthYearStr = formatter.format(d).replace(' ', '-');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
+            payloadData = data;
+            break; // Break the while loop since it succeeded!
+          } catch (fetchErr: any) {
+            attempt++;
+            console.error(`Attempt ${attempt} failed for file ${files[i].fileName}:`, fetchErr);
+            if (attempt >= maxAttempts) {
+              throw fetchErr; // Exhausted retries, crash the outer try-catch
             }
+            // Wait 2000ms before retrying
+            await new Promise(resolve => setTimeout(resolve, 2000));
           }
-
-          const cleanRow = { ...rawRow };
-          delete cleanRow['Patente'];
-          delete cleanRow['Pedimento'];
-          delete cleanRow['SeccionAduanera'];
-
-          documentsToInsert.push({
-            month_year: monthYearStr,
-            Patente: String(patente),
-            Pedimento: String(pedimento),
-            row_data: cleanRow,
-            source_file: file.fileName
-          });
         }
 
-        // Update progress UI
-        setProgress(i + 1);
+        if (payloadData && payloadData.flatCsvData) {
+          accumulatedCsv = accumulatedCsv.concat(payloadData.flatCsvData);
+        }
+
+        // Update progress and calculate ETA
+        const currentCount = Math.min(i + CHUNK_SIZE, files.length);
+        setProgress(currentCount);
         const elapsedSeconds = (Date.now() - startTime) / 1000;
-        const avgTimePerFile = elapsedSeconds / (i + 1);
-        setEta(Math.round(avgTimePerFile * (files.length - (i + 1))));
+        const avgTimePerFile = elapsedSeconds / currentCount;
+        const remainingFiles = files.length - currentCount;
+        setEta(Math.round(avgTimePerFile * remainingFiles));
 
-        // Allow UI to render
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
-
-      // 2. Aggregate identically to route.ts
-      const mergedData: any = {};
-      let indexFallback = 0;
-
-      const globalHeaders = new Set<string>();
-      for (const doc of documentsToInsert) {
-        Object.keys(doc.row_data).forEach(k => globalHeaders.add(k));
-      }
-
-      for (const doc of documentsToInsert) {
-        const my = doc.month_year;
-        const pat = doc.Patente;
-        const ped = doc.Pedimento;
-        const row = doc.row_data;
-
-        if (!mergedData[my]) mergedData[my] = {};
-        const key = `${pat}_${ped}`;
-
-        if (!mergedData[my][key]) {
-          mergedData[my][key] = {
-            Patente: pat,
-            Pedimento: ped,
-            Partidas: []
-          };
+        // Add a 1-second delay between chunk requests to give Vercel and MongoDB some breathing room
+        if (currentCount < files.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
-
-        let casoKey = row['ComplementoCaso'];
-        if (!casoKey || casoKey === '') {
-          casoKey = `P_${indexFallback}`;
-          indexFallback++;
-        }
-
-        const finalRow: any = {};
-        globalHeaders.forEach(k => {
-          const val = row[k];
-          if (val !== '' && val !== null && val !== undefined) {
-            finalRow[k] = val;
-          } else {
-            finalRow[k] = '';
-          }
-        });
-
-        mergedData[my][key].Partidas.push({ [casoKey]: finalRow });
-
-        excelExportRows.push({
-          Month_Year: my,
-          Patente: pat,
-          Pedimento: ped,
-          ComplementoCaso_Key: casoKey,
-          SourceFile: doc.source_file,
-          ...finalRow
-        });
       }
 
-      const finalDocMongo: any = { month_year: {} };
-      for (const my of Object.keys(mergedData)) {
-        const pedimentosList = [];
-        for (const k of Object.keys(mergedData[my])) {
-          pedimentosList.push(mergedData[my][k]);
-        }
-        finalDocMongo.month_year[my] = pedimentosList;
-      }
-
-      setResponse({ success: true, flatCsvData: excelExportRows, finalJson: finalDocMongo });
+      setResponse({ success: true, flatCsvData: accumulatedCsv, finalJson: null });
     } catch (err: any) {
       alert(`Error procesando los archivos: ${err.message}`);
     } finally {
@@ -277,7 +223,7 @@ export default function Home() {
             <div className="list-actions">
               <button className="action-btn secondary" onClick={clearAll} disabled={isProcessing}>Borrar Lista</button>
               <button className="action-btn" onClick={processAndUpload} disabled={isProcessing || files.length === 0}>
-                {isProcessing ? 'Procesando...' : 'Generar Archivos (Sin BD)'}
+                {isProcessing ? 'Procesando...' : 'Subir a MongoDB'}
               </button>
             </div>
           </div>
@@ -285,7 +231,7 @@ export default function Home() {
           {isProcessing && (
             <div style={{ marginTop: '20px', padding: '16px', borderRadius: '8px', background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <strong style={{ color: 'var(--primary)' }}>Procesando datos: {progress} de {files.length} archivos</strong>
+                <strong style={{ color: 'var(--primary)' }}>Subiendo datos: {progress} de {files.length} archivos</strong>
                 <span style={{ color: '#6b7280', fontSize: '0.9rem' }}>Tiempo restante estimado: ~{eta} segundos</span>
               </div>
               <div style={{ width: '100%', height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }}>
@@ -298,8 +244,8 @@ export default function Home() {
 
       {response && response.success && (
         <div className="instructions-section" style={{ marginTop: '32px', borderLeft: '4px solid var(--primary)' }}>
-          <h2 style={{ color: 'var(--primary)' }}>✅ Archivos Generados Exitosamente</h2>
-          <p>Los datos han sido procesados localmente y están listos para descargar. Ya no dependen de MongoDB.</p>
+          <h2 style={{ color: 'var(--primary)' }}>✅ Sincronización Exitosa</h2>
+          <p>Los datos ya se han ordenado e insertado exitosamente en tu colección de MongoDB leyendo la configuración automáticamente del archivo <b>.env</b> principal.</p>
           <div style={{ marginTop: '20px', display: 'flex', gap: '15px' }}>
             <button className="action-btn" onClick={downloadCsv} style={{ background: '#217346' }}>
               📊 Descargar Tabla (Excel CSV)
