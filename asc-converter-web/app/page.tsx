@@ -103,7 +103,7 @@ export default function Home() {
 
         while (attempt < maxAttempts) {
           try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api/upload';
+            const apiUrl = '/api/upload';
             const res = await fetch(apiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
