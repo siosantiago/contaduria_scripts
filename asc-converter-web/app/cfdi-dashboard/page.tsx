@@ -232,7 +232,10 @@ export default function CfdiDashboard() {
                 const batchData = await Promise.all(fileDataPromises);
 
                 // Send to Python backend
-                const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                // Sanitize URL: Remove trailing slashes and common mistake prefixes like /api/upload
+                const rawUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                const backendUrl = rawUrl.replace(/\/api\/upload\/?$/, "").replace(/\/$/, "");
+                
                 const res = await fetch(`${backendUrl}/api/upload-xml`, {
                     method: "POST",
                     headers: { 
