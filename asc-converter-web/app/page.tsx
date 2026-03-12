@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import Papa from 'papaparse';
+import Link from 'next/link';
 
 export default function Home() {
   const [files, setFiles] = useState<any[]>([]);
@@ -193,7 +194,12 @@ export default function Home() {
   return (
     <main className="main-container">
       <div className="header">
-        <h1>Centro de Integración ASC</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h1>Centro de Integración ASC</h1>
+          <Link href="/cfdi-dashboard" style={{ background: '#217346', color: '#fff', padding: '10px 20px', borderRadius: '12px', textDecoration: 'none', fontWeight: 'bold', fontSize: '14px' }}>
+            Ir a CFDI XML Dashboard 🚀
+          </Link>
+        </div>
         <p>Convierte y sube múltiples archivos a tu base de datos de MongoDB.</p>
       </div>
 

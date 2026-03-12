@@ -1,15 +1,33 @@
 import os
-from fastapi import FastAPI, HTTPException
+import uuid
+import datetime
+import xmltodict
+from decimal import Decimal
+from supabase import create_client, Client
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = FastAPI()
 
-# Allow CORS for local dev and Vercel frontend
+# --- Supabase Setup ---
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", os.environ.get("SUPABASE_SERVICE_KEY", SUPABASE_KEY))
+
+supabase_client: Optional[Client] = None
+if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        print("Supabase client initialized successfully with available key.")
+    except Exception as e:
+        print(f"Failed to initialize Supabase client: {e}")
+# ----------------------# Allow CORS for local dev and Vercel frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -154,3 +172,153 @@ async def upload_files(payload: UploadRequest):
     except Exception as e:
         print("Error processing batch:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- XML to Supabase Upload Endpoint ---
+
+class XmlFileData(BaseModel):
+    fileName: str
+    content: str
+
+class UploadXmlRequest(BaseModel):
+    files: List[XmlFileData]
+    owner_id: Optional[str] = None
+    access_token: Optional[str] = None
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def verify_api_key(api_key: str = Security(api_key_header)):
+    # Verify the token/user has permission to ingest invoices
+    expected_key = os.environ.get("API_KEY", "dev_secret")
+    if not api_key or api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing API Key. Ensure token has permission to ingest invoices.")
+    return api_key
+
+@app.post("/api/upload-xml")
+async def upload_xml_files(payload: UploadXmlRequest, api_key: str = Depends(verify_api_key)):
+    print(f"DEBUG: Received upload request with owner_id={payload.owner_id}, token_len={len(payload.access_token) if payload.access_token else 0}, files_count={len(payload.files)}")
+
+    from supabase import ClientOptions
+    client_to_use = supabase_client
+    if payload.access_token and SUPABASE_URL and SUPABASE_KEY:
+        try:
+            opts = ClientOptions(headers={"Authorization": f"Bearer {payload.access_token}"})
+            client_to_use = create_client(SUPABASE_URL, SUPABASE_KEY, options=opts)
+        except Exception as e:
+            print("Warning: Failed to create authenticated Supabase client:", e)
+
+    inserted_count = 0
+    errors = []
+    
+    # Optional: We can insert in batches if payload is huge
+    rows_to_insert = []
+
+    for file_data in payload.files:
+        try:
+            # Parse XML to dictionary
+            xml_dict = xmltodict.parse(file_data.content)
+            
+            # The root is usually <cfdi:Comprobante>
+            comprobante = xml_dict.get("cfdi:Comprobante", {})
+            if not comprobante:
+                errors.append({"file": file_data.fileName, "error": "No cfdi:Comprobante root element found."})
+                continue
+            
+            # Extract fields handling variations (some keys use @ prefix due to xmltodict parsing attributes)
+            version = comprobante.get("@Version", "")
+            serie = comprobante.get("@Serie", "")
+            folio = comprobante.get("@Folio", "")
+            fecha = comprobante.get("@Fecha", None)
+            sello = comprobante.get("@Sello", "")
+            forma_pago = comprobante.get("@FormaPago", "")
+            no_certificado = comprobante.get("@NoCertificado", "")
+            certificado = comprobante.get("@Certificado", "")
+            subtotal = comprobante.get("@SubTotal", 0)
+            descuento = comprobante.get("@Descuento", 0)
+            moneda = comprobante.get("@Moneda", "MXN")
+            tipo_cambio = comprobante.get("@TipoCambio", 1)
+            total = comprobante.get("@Total", 0)
+            tipo_de_comprobante = comprobante.get("@TipoDeComprobante", "")
+            exportacion = comprobante.get("@Exportacion", "")
+            metodo_pago = comprobante.get("@MetodoPago", "")
+            lugar_expedicion = comprobante.get("@LugarExpedicion", "")
+            
+            # Handle Emisor and Receptor blocks
+            emisor = comprobante.get("cfdi:Emisor", {})
+            emisor_rfc = emisor.get("@Rfc", "")
+            emisor_nombre = emisor.get("@Nombre", "")
+            
+            receptor = comprobante.get("cfdi:Receptor", {})
+            receptor_rfc = receptor.get("@Rfc", "")
+            receptor_nombre = receptor.get("@Nombre", "")
+            
+            # Extract UUID and SelloSAT from Complemento -> TimbreFiscalDigital
+            cfdi_uuid = None
+            sello_sat = None
+            complemento = comprobante.get("cfdi:Complemento")
+            if complemento:
+                comp_list = complemento if isinstance(complemento, list) else [complemento]
+                for comp in comp_list:
+                    if isinstance(comp, dict) and "tfd:TimbreFiscalDigital" in comp:
+                        tfd = comp["tfd:TimbreFiscalDigital"]
+                        tfd_list = tfd if isinstance(tfd, list) else [tfd]
+                        for t in tfd_list:
+                            if isinstance(t, dict):
+                                if "@UUID" in t:
+                                    cfdi_uuid = t.get("@UUID")
+                                if "@SelloSAT" in t:
+                                    sello_sat = t.get("@SelloSAT")
+                                break
+                    if cfdi_uuid:
+                        break
+            
+            row = {
+                "id": cfdi_uuid if cfdi_uuid else str(uuid.uuid4()),
+                "source_file": file_data.fileName,
+                "emisor_rfc": emisor_rfc,
+                "emisor_nombre": emisor_nombre,
+                "receptor_rfc": receptor_rfc,
+                "receptor_nombre": receptor_nombre,
+                "subtotal": str(Decimal(subtotal)) if subtotal else "0.00",
+                "descuento": str(Decimal(descuento)) if descuento else "0.00",
+                "total": str(Decimal(total)) if total else "0.00",
+                "moneda": moneda,
+                "tipo_cambio": str(Decimal(tipo_cambio)) if tipo_cambio else "1.00",
+                "version": version,
+                "serie": serie,
+                "folio": folio,
+                "fecha": fecha if fecha else None,
+                "sello": sello,
+                "forma_pago": forma_pago,
+                "no_certificado": no_certificado,
+                "certificado": certificado,
+                "tipo_de_comprobante": tipo_de_comprobante,
+                "exportacion": exportacion,
+                "metodo_pago": metodo_pago,
+                "lugar_expedicion": lugar_expedicion,
+                "sello_sat": sello_sat,
+                "raw_data": xml_dict,  # the complete parsed JSON structure
+                "owner_id": payload.owner_id
+            }
+            rows_to_insert.append(row)
+            
+        except Exception as e:
+            errors.append({"file": file_data.fileName, "error": str(e)})
+
+    # Insert into Supabase table "invoices" in chunks of 100 to avoid request size limits
+    chunk_size = 100
+    for i in range(0, len(rows_to_insert), chunk_size):
+        chunk = rows_to_insert[i:i + chunk_size]
+        try:
+            print(f"DEBUG: Upserting chunk of {len(chunk)} rows to Supabase...")
+            res = client_to_use.table("invoices").upsert(chunk, on_conflict="id").execute()
+            inserted_count += len(chunk)
+            print(f"DEBUG: Upsert successful. Cumulative inserted={inserted_count}")
+        except Exception as e:
+            errors.append({"error": f"Failed inserting chunk {i}-{i+chunk_size}: {str(e)}"})
+
+    return {
+        "success": True,
+        "processed": len(payload.files),
+        "inserted": inserted_count,
+        "errors": errors
+    }
