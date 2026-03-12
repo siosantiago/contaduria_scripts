@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, UploadCloud, FileText, Database, CheckCircle2, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { ArrowLeft, UploadCloud, FileText, Database, CheckCircle2, ChevronDown, ChevronUp, Trash2, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import styles from "./page.module.css";
 
@@ -53,7 +53,12 @@ export default function CfdiDashboard() {
     const [authError, setAuthError] = useState("");
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+    const [currentPage, setCurrentPage] = useState(0);
+    const [totalCount, setTotalCount] = useState(0);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [searchInput, setSearchInput] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const PAGE_SIZE = 100;
 
     const checkSession = useCallback(async () => {
         try {
@@ -108,23 +113,38 @@ export default function CfdiDashboard() {
         }
     };
 
-    const fetchInvoices = useCallback(async () => {
+    const fetchInvoices = useCallback(async (page: number = 0, query: string = "") => {
         try {
             setLoading(true);
-            const { data, error } = await supabase
-                .from("invoices")
-                .select("*")
+            const from = page * PAGE_SIZE;
+            const to = from + PAGE_SIZE - 1;
+
+            let baseQuery = supabase.from("invoices").select("*", { count: "exact" });
+
+            if (query.trim()) {
+                const q = `%${query.trim()}%`;
+                baseQuery = baseQuery.or(
+                    [
+                        "emisor_rfc", "emisor_nombre", "receptor_rfc", "receptor_nombre",
+                        "folio", "serie", "forma_pago", "metodo_pago", "lugar_expedicion",
+                        "source_file", "id", "moneda", "tipo_de_comprobante"
+                    ].map(col => `${col}.ilike.${q}`).join(",")
+                );
+            }
+
+            const { data, error, count } = await baseQuery
                 .order("created_at", { ascending: false })
-                .limit(100); // just fetch top 100 for dashboard
+                .range(from, to);
 
             if (error) throw error;
             setInvoices(data || []);
+            setTotalCount(count ?? 0);
         } catch (err) {
             console.error("Error fetching invoices:", err);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [PAGE_SIZE]);
 
     const fetchHistory = useCallback(async () => {
         try {
@@ -151,10 +171,27 @@ export default function CfdiDashboard() {
 
     useEffect(() => {
         if (isAuthenticated) {
-            fetchInvoices();
             fetchHistory();
         }
-    }, [isAuthenticated, fetchInvoices, fetchHistory]);
+    }, [isAuthenticated, fetchHistory]);
+
+    useEffect(() => {
+        if (isAuthenticated) {
+            fetchInvoices(currentPage, searchQuery);
+        }
+    }, [isAuthenticated, currentPage, searchQuery]);
+
+    const handleSearch = (e: React.FormEvent) => {
+        e.preventDefault();
+        setCurrentPage(0);
+        setSearchQuery(searchInput);
+    };
+
+    const handleSearchClear = () => {
+        setSearchInput("");
+        setCurrentPage(0);
+        setSearchQuery("");
+    };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files || e.target.files.length === 0) return;
@@ -195,7 +232,8 @@ export default function CfdiDashboard() {
                 const batchData = await Promise.all(fileDataPromises);
 
                 // Send to Python backend
-                const res = await fetch("http://localhost:8000/api/upload-xml", {
+                const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                const res = await fetch(`${backendUrl}/api/upload-xml`, {
                     method: "POST",
                     headers: { 
                         "Content-Type": "application/json",
@@ -205,9 +243,10 @@ export default function CfdiDashboard() {
                 });
 
                 if (!res.ok) {
-                    const err = await res.text();
-                    console.error("Batch error:", err);
+                    const errorText = await res.text();
+                    console.error("Batch error:", errorText);
                     totalErrors += batchData.length;
+                    allErrors.push({ file: "Backend Error", error: errorText || "Unknown backend error" });
                 } else {
                     const data = await res.json();
                     totalInserted += data.inserted || 0;
@@ -248,7 +287,10 @@ export default function CfdiDashboard() {
                 }
             }
 
-            await fetchInvoices(); // Refresh the list
+            setCurrentPage(0);
+            setSearchQuery("");
+            setSearchInput("");
+            await fetchInvoices(0, ""); // Refresh the list
             if (totalErrors > 0) {
                 alert(`Subida completada con advertencias: ${totalInserted} facturas insertadas, ${totalErrors} errores. Revisa la consola para más detalles.`);
             } else {
@@ -347,7 +389,7 @@ export default function CfdiDashboard() {
                 <div className={styles.statsRow}>
                     <div className={styles.statCard}>
                         <div className={styles.statTitle}><FileText size={14} className={styles.navLink} style={{ display: 'inline', marginRight: 4 }} /> Facturas Procesadas</div>
-                        <div className={styles.statValue}>{invoices.length}</div>
+                        <div className={styles.statValue}>{totalCount.toLocaleString()}</div>
                     </div>
                     <div className={styles.statCard}>
                         <div className={styles.statTitle}><Database size={14} className={styles.navLink} style={{ display: 'inline', marginRight: 4 }} /> Monto Total de Facturas</div>
@@ -357,11 +399,31 @@ export default function CfdiDashboard() {
                     </div>
                 </div>
 
+                {/* Search Bar */}
+                <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                        <Search size={16} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
+                        <input
+                            type="text"
+                            placeholder="Buscar por RFC, nombre, folio, archivo..."
+                            value={searchInput}
+                            onChange={e => setSearchInput(e.target.value)}
+                            style={{ width: '100%', paddingLeft: 34, paddingRight: 12, paddingTop: 8, paddingBottom: 8, border: '1px solid #d1d5db', borderRadius: 8, fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
+                        />
+                    </div>
+                    <button type="submit" className={styles.passwordButton} style={{ width: 'auto', padding: '8px 18px', margin: 0 }}>Buscar</button>
+                    {searchQuery && (
+                        <button type="button" onClick={handleSearchClear} style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 8, background: '#f9fafb', cursor: 'pointer', fontSize: 13, color: '#6b7280' }}>
+                            Limpiar
+                        </button>
+                    )}
+                </form>
+
                 <div className={styles.tableContainer}>
                     {loading ? (
                         <div className={styles.loading}>Conectando a la base de datos...</div>
                     ) : invoices.length === 0 ? (
-                        <div className={styles.loading}>No se encontraron datos CFDI. Sube una carpeta para comenzar.</div>
+                        <div className={styles.loading}>{searchQuery ? `No se encontraron resultados para "${searchQuery}".` : "No se encontraron datos CFDI. Sube una carpeta para comenzar."}</div>
                     ) : (
                         <div className={styles.tableWrapper}>
                             <table className={styles.table}>
@@ -440,6 +502,35 @@ export default function CfdiDashboard() {
                         </div>
                     )}
                 </div>
+
+                {/* Pagination */}
+                {totalCount > PAGE_SIZE && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, fontSize: 14, color: '#4b5563' }}>
+                        <span>
+                            Mostrando {currentPage * PAGE_SIZE + 1}–{Math.min((currentPage + 1) * PAGE_SIZE, totalCount)} de {totalCount.toLocaleString()} facturas
+                            {searchQuery && ` para "${searchQuery}"`}
+                        </span>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <button
+                                onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                                disabled={currentPage === 0}
+                                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', border: '1px solid #d1d5db', borderRadius: 8, background: currentPage === 0 ? '#f3f4f6' : '#fff', cursor: currentPage === 0 ? 'not-allowed' : 'pointer', color: currentPage === 0 ? '#9ca3af' : '#111827' }}
+                            >
+                                <ChevronLeft size={16} /> Anterior
+                            </button>
+                            <span style={{ padding: '6px 12px', background: '#f3f4f6', borderRadius: 8, fontWeight: 600 }}>
+                                {currentPage + 1} / {Math.ceil(totalCount / PAGE_SIZE)}
+                            </span>
+                            <button
+                                onClick={() => setCurrentPage(p => p + 1)}
+                                disabled={(currentPage + 1) * PAGE_SIZE >= totalCount}
+                                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', border: '1px solid #d1d5db', borderRadius: 8, background: (currentPage + 1) * PAGE_SIZE >= totalCount ? '#f3f4f6' : '#fff', cursor: (currentPage + 1) * PAGE_SIZE >= totalCount ? 'not-allowed' : 'pointer', color: (currentPage + 1) * PAGE_SIZE >= totalCount ? '#9ca3af' : '#111827' }}
+                            >
+                                Siguiente <ChevronRight size={16} />
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Upload History Section */}
